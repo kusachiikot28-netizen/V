@@ -15,6 +15,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [points, setPoints] = useState<[number, number][]>([]);
+  const [mode, setMode] = useState<'draw' | 'poi' | 'view'>('draw');
   const [showElevation, setShowElevation] = useState(true);
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState(0);
@@ -32,6 +33,8 @@ export default function App() {
 
   // Socket Listener for collaborative editing
   useEffect(() => {
+    socket.emit('join-route', 'default');
+
     socket.on('route-update', (newPoints: [number, number][]) => {
       setPoints(newPoints);
     });
@@ -83,8 +86,13 @@ export default function App() {
   };
 
   const handleRouteUpdate = (route: any) => {
-    setPoints(route.points);
-    socket.emit('update-route', { routeId: 'default', routeData: route.points });
+    if (route.points) {
+      setPoints(route.points);
+      socket.emit('update-route', { routeId: 'default', routeData: route.points });
+    }
+    if (route.mode) {
+      setMode(route.mode);
+    }
   };
 
   const handleClear = () => {
@@ -126,6 +134,11 @@ export default function App() {
     }
   };
 
+  const handleImport = (newPoints: [number, number][]) => {
+    setPoints(newPoints);
+    socket.emit('update-route', { routeId: 'default', routeData: newPoints });
+  };
+
   if (!isAuthReady) {
     return (
       <div className="h-screen w-screen bg-background flex items-center justify-center">
@@ -146,6 +159,9 @@ export default function App() {
           rides={rides}
           onLogin={handleLogin}
           onLogout={handleLogout}
+          mode={mode}
+          onModeChange={setMode}
+          onImport={handleImport}
         />
       )}
 
@@ -153,7 +169,7 @@ export default function App() {
       <main className="flex-1 relative flex flex-col">
         {/* Map Area */}
         <div className="flex-1 relative">
-          <MapView onRouteUpdate={handleRouteUpdate} initialRoute={{ points }} />
+          <MapView onRouteUpdate={handleRouteUpdate} initialRoute={{ points }} mode={mode} />
           
           {/* Auth Button Overlay */}
           {!isNavigating && (
