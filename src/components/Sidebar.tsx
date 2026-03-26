@@ -1,18 +1,26 @@
 import React, { useState } from 'react';
-import { Save, Share2, Trash2, Plus, Settings, Activity, History, Map as MapIcon, User, Sparkles } from 'lucide-react';
+import { Save, Share2, Trash2, Plus, Settings, Activity, History, Map as MapIcon, User, Sparkles, LogIn, LogOut } from 'lucide-react';
 import { motion } from 'motion/react';
 import { getRouteDescription } from '../services/geminiService';
+import { FirebaseUser, db, OperationType, handleFirestoreError } from '../firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { format } from 'date-fns';
 
 interface SidebarProps {
+  user: FirebaseUser | null;
   points: [number, number][];
   onClear: () => void;
   onSave: () => void;
+  rides: any[];
+  onLogin: () => void;
+  onLogout: () => void;
 }
 
-export default function Sidebar({ points, onClear, onSave }: SidebarProps) {
+export default function Sidebar({ user, points, onClear, onSave, rides, onLogin, onLogout }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'editor' | 'stats' | 'history'>('editor');
   const [description, setDescription] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [routeName, setRouteName] = useState('');
 
   const handleGenerateDescription = async () => {
     if (points.length < 2) return;
@@ -20,6 +28,32 @@ export default function Sidebar({ points, onClear, onSave }: SidebarProps) {
     const desc = await getRouteDescription({ points });
     setDescription(desc);
     setIsLoading(false);
+  };
+
+  const handleSaveRoute = async () => {
+    if (!user) {
+      alert('Пожалуйста, войдите, чтобы сохранить маршрут');
+      return;
+    }
+    if (points.length < 2) return;
+
+    const path = 'routes';
+    try {
+      await addDoc(collection(db, path), {
+        authorUid: user.uid,
+        name: routeName || `Маршрут от ${format(new Date(), 'dd.MM.yyyy')}`,
+        points: points,
+        distance: points.length * 1.2,
+        elevation: points.length * 15,
+        description: description || '',
+        isPublic: true,
+        createdAt: serverTimestamp(),
+      });
+      alert('Маршрут успешно сохранен!');
+      onSave();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    }
   };
 
   return (
@@ -68,11 +102,17 @@ export default function Sidebar({ points, onClear, onSave }: SidebarProps) {
                     <input 
                       type="text" 
                       placeholder="Название маршрута" 
+                      value={routeName}
+                      onChange={(e) => setRouteName(e.target.value)}
                       className="bg-transparent w-full outline-none"
                     />
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={onSave} className="btn-primary flex-1 flex items-center justify-center gap-2 py-2">
+                    <button 
+                      onClick={handleSaveRoute} 
+                      disabled={points.length < 2}
+                      className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 disabled:opacity-50"
+                    >
                       <Save size={18} /> Сохранить
                     </button>
                     <button className="btn-outline p-2">
@@ -145,52 +185,85 @@ export default function Sidebar({ points, onClear, onSave }: SidebarProps) {
 
         {activeTab === 'stats' && (
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-            <div className="card">
-              <p className="text-xs text-text-secondary mb-1">Всего за месяц</p>
-              <p className="text-2xl font-bold text-primary">428.5 км</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="card p-3">
-                <p className="text-[10px] text-text-secondary">Выезды</p>
-                <p className="text-lg font-bold">12</p>
+            {!user ? (
+              <div className="text-center py-10">
+                <p className="text-sm text-text-secondary mb-4">Войдите, чтобы увидеть статистику</p>
+                <button onClick={onLogin} className="btn-primary py-2 px-4">Войти</button>
               </div>
-              <div className="card p-3">
-                <p className="text-[10px] text-text-secondary">Высота</p>
-                <p className="text-lg font-bold">3.2 км</p>
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="card">
+                  <p className="text-xs text-text-secondary mb-1">Всего дистанция</p>
+                  <p className="text-2xl font-bold text-primary">
+                    {rides.reduce((acc, r) => acc + (r.distance || 0), 0).toFixed(1)} км
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="card p-3">
+                    <p className="text-[10px] text-text-secondary">Выезды</p>
+                    <p className="text-lg font-bold">{rides.length}</p>
+                  </div>
+                  <div className="card p-3">
+                    <p className="text-[10px] text-text-secondary">Высота</p>
+                    <p className="text-lg font-bold">
+                      {(rides.reduce((acc, r) => acc + (r.elevation || 0), 0) / 1000).toFixed(1)} км
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </motion.div>
         )}
 
         {activeTab === 'history' && (
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="card p-3 hover:border-primary/50 cursor-pointer transition-colors">
-                <div className="flex justify-between items-start mb-2">
-                  <p className="text-sm font-semibold">Вечерний заезд #{i}</p>
-                  <span className="text-[10px] text-text-secondary">24.03.2026</span>
-                </div>
-                <div className="flex gap-4 text-xs text-text-secondary">
-                  <span>32.4 км</span>
-                  <span>1ч 45м</span>
-                </div>
+            {!user ? (
+              <div className="text-center py-10">
+                <p className="text-sm text-text-secondary mb-4">Войдите, чтобы увидеть историю</p>
+                <button onClick={onLogin} className="btn-primary py-2 px-4">Войти</button>
               </div>
-            ))}
+            ) : rides.length === 0 ? (
+              <p className="text-sm text-text-secondary italic text-center py-10">История поездок пуста</p>
+            ) : (
+              rides.map((ride, i) => (
+                <div key={ride.id || i} className="card p-3 hover:border-primary/50 cursor-pointer transition-colors">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-semibold">Поездка #{rides.length - i}</p>
+                    <span className="text-[10px] text-text-secondary">
+                      {ride.date?.toDate ? format(ride.date.toDate(), 'dd.MM.yyyy') : '...'}
+                    </span>
+                  </div>
+                  <div className="flex gap-4 text-xs text-text-secondary">
+                    <span>{ride.distance?.toFixed(1)} км</span>
+                    <span>{(ride.duration / 60).toFixed(0)} мин</span>
+                  </div>
+                </div>
+              ))
+            )}
           </motion.div>
         )}
       </div>
 
       {/* User Profile Footer */}
       <div className="p-6 border-t border-stroke bg-black/20">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
-            <User size={20} />
+        {user ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border border-primary/30" referrerPolicy="no-referrer" />
+              <div>
+                <p className="text-sm font-semibold truncate max-w-[120px]">{user.displayName}</p>
+                <p className="text-xs text-text-secondary">Велосипедист</p>
+              </div>
+            </div>
+            <button onClick={onLogout} className="text-text-secondary hover:text-error transition-colors">
+              <LogOut size={18} />
+            </button>
           </div>
-          <div>
-            <p className="text-sm font-semibold">Велосипедист</p>
-            <p className="text-xs text-text-secondary">Профессионал</p>
-          </div>
-        </div>
+        ) : (
+          <button onClick={onLogin} className="btn-primary w-full flex items-center justify-center gap-2">
+            <LogIn size={18} /> Войти
+          </button>
+        )}
       </div>
     </div>
   );

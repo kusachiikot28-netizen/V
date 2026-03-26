@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Профиль пользователя велосипедного навигатора",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string", "description": "Имя пользователя" },
+        "email": { "type": "string", "description": "Email пользователя" },
+        "photoURL": { "type": "string", "description": "URL аватара" },
+        "role": { "type": "string", "enum": ["user", "admin"], "description": "Роль пользователя" },
+        "totalDistance": { "type": "number", "description": "Суммарная дистанция (км)" },
+        "totalElevation": { "type": "number", "description": "Суммарный набор высоты (м)" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Дата регистрации" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Route": {
+      "title": "Route",
+      "description": "Велосипедный маршрут",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID маршрута" },
+        "authorUid": { "type": "string", "description": "UID автора" },
+        "name": { "type": "string", "description": "Название маршрута" },
+        "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Координаты точек [lng, lat]" },
+        "distance": { "type": "number", "description": "Дистанция (км)" },
+        "elevation": { "type": "number", "description": "Набор высоты (м)" },
+        "description": { "type": "string", "description": "AI-описание маршрута" },
+        "isPublic": { "type": "boolean", "description": "Публичный ли маршрут" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Дата создания" }
+      },
+      "required": ["authorUid", "name", "points"]
+    },
+    "Ride": {
+      "title": "Ride",
+      "description": "Завершенная поездка",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID пользователя" },
+        "routeId": { "type": "string", "description": "ID маршрута (если есть)" },
+        "distance": { "type": "number", "description": "Пройденная дистанция (км)" },
+        "duration": { "type": "number", "description": "Длительность (сек)" },
+        "averageSpeed": { "type": "number", "description": "Средняя скорость (км/ч)" },
+        "elevation": { "type": "number", "description": "Набор высоты (м)" },
+        "date": { "type": "string", "format": "date-time", "description": "Дата поездки" }
+      },
+      "required": ["uid", "distance", "duration", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Документы профилей пользователей"
+    },
+    "/routes/{routeId}": {
+      "schema": "Route",
+      "description": "Коллекция маршрутов"
+    },
+    "/rides/{rideId}": {
+      "schema": "Ride",
+      "description": "Коллекция завершенных поездок"
+    }
+  }
+}

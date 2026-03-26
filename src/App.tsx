@@ -1,20 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import MapView from './components/MapView';
 import Sidebar from './components/Sidebar';
 import ElevationChart from './components/ElevationChart';
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Navigation, Info, X } from 'lucide-react';
+import { Activity, Navigation, Info, X, LogIn, LogOut, User as UserIcon } from 'lucide-react';
+import { auth, googleProvider, db, FirebaseUser, OperationType, handleFirestoreError } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { collection, addDoc, serverTimestamp, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 
 const socket = io();
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [points, setPoints] = useState<[number, number][]>([]);
   const [showElevation, setShowElevation] = useState(true);
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [targetSpeed] = useState(22);
+  const [rides, setRides] = useState<any[]>([]);
 
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Socket Listener for collaborative editing
   useEffect(() => {
     socket.on('route-update', (newPoints: [number, number][]) => {
       setPoints(newPoints);
@@ -24,6 +40,47 @@ export default function App() {
       socket.off('route-update');
     };
   }, []);
+
+  // Rides Listener
+  useEffect(() => {
+    if (!user) {
+      setRides([]);
+      return;
+    }
+
+    const path = 'rides';
+    const q = query(
+      collection(db, path),
+      where('uid', '==', user.uid),
+      orderBy('date', 'desc'),
+      limit(10)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ridesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRides(ridesData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Login error:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
 
   const handleRouteUpdate = (route: any) => {
     setPoints(route.points);
@@ -35,9 +92,29 @@ export default function App() {
     socket.emit('update-route', { routeId: 'default', routeData: [] });
   };
 
-  const toggleNavigation = () => {
-    setIsNavigating(!isNavigating);
-    if (!isNavigating) {
+  const toggleNavigation = async () => {
+    if (isNavigating) {
+      // Save ride on stop
+      if (user && points.length > 0) {
+        const path = 'rides';
+        try {
+          await addDoc(collection(db, path), {
+            uid: user.uid,
+            distance: points.length * 1.2,
+            duration: 2535, // Mock duration
+            date: serverTimestamp(),
+            elevation: points.length * 15,
+            averageSpeed: currentSpeed || 20,
+          });
+          alert('Поездка сохранена!');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, path);
+        }
+      }
+      setIsNavigating(false);
+      setCurrentSpeed(0);
+    } else {
+      setIsNavigating(true);
       // Simulate speed
       const interval = setInterval(() => {
         setCurrentSpeed(prev => {
@@ -49,14 +126,26 @@ export default function App() {
     }
   };
 
+  if (!isAuthReady) {
+    return (
+      <div className="h-screen w-screen bg-background flex items-center justify-center">
+        <div className="text-primary animate-pulse">Загрузка...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-text-primary">
       {/* Sidebar */}
       {!isNavigating && (
         <Sidebar 
+          user={user}
           points={points} 
           onClear={handleClear} 
           onSave={() => alert('Маршрут сохранен!')} 
+          rides={rides}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
         />
       )}
 
@@ -66,6 +155,25 @@ export default function App() {
         <div className="flex-1 relative">
           <MapView onRouteUpdate={handleRouteUpdate} initialRoute={{ points }} />
           
+          {/* Auth Button Overlay */}
+          {!isNavigating && (
+            <div className="absolute top-6 left-6 z-50">
+              {user ? (
+                <div className="flex items-center gap-3 card bg-surface/80 backdrop-blur-md p-2">
+                  <img src={user.photoURL || ''} alt="" className="w-8 h-8 rounded-full border border-primary/30" referrerPolicy="no-referrer" />
+                  <span className="text-xs font-semibold hidden md:block">{user.displayName}</span>
+                  <button onClick={handleLogout} className="p-2 hover:text-error transition-colors" title="Выйти">
+                    <LogOut size={18} />
+                  </button>
+                </div>
+              ) : (
+                <button onClick={handleLogin} className="btn-primary flex items-center gap-2 px-4 py-2 text-sm">
+                  <LogIn size={18} /> Войти
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Navigation Overlay */}
           <AnimatePresence>
             {isNavigating && (
@@ -103,7 +211,7 @@ export default function App() {
                     <div className="flex gap-4">
                       <div className="text-center">
                         <p className="text-[10px] text-text-secondary">Дистанция</p>
-                        <p className="text-sm font-bold">12.4 км</p>
+                        <p className="text-sm font-bold">{(points.length * 1.2).toFixed(1)} км</p>
                       </div>
                       <div className="text-center">
                         <p className="text-[10px] text-text-secondary">Время</p>

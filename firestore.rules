@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (matches request.auth.uid)
+    // Fields:
+    //   - uid: string (required, immutable) - Firebase Auth UID
+    //   - displayName: string (optional) - User's display name
+    //   - email: string (required, immutable) - User's email
+    //   - photoURL: string (optional) - User's avatar URL
+    //   - role: string (required) - 'user' or 'admin'
+    //   - totalDistance: number (optional) - Total distance cycled
+    //   - totalElevation: number (optional) - Total elevation gained
+    //   - createdAt: timestamp (required, immutable) - Registration date
+    //
+    // Collection: routes
+    // Document ID: {routeId}
+    // Fields:
+    //   - authorUid: string (required, immutable) - UID of the creator
+    //   - name: string (required) - Route name
+    //   - points: list (required) - Array of coordinates
+    //   - distance: number (optional) - Route distance
+    //   - elevation: number (optional) - Route elevation
+    //   - description: string (optional) - AI description
+    //   - isPublic: bool (required) - Visibility
+    //   - createdAt: timestamp (required, immutable) - Creation date
+    //
+    // Collection: rides
+    // Document ID: {rideId}
+    // Fields:
+    //   - uid: string (required, immutable) - UID of the rider
+    //   - routeId: string (optional) - ID of the route
+    //   - distance: number (required) - Ride distance
+    //   - duration: number (required) - Ride duration in seconds
+    //   - averageSpeed: number (optional) - Average speed
+    //   - elevation: number (optional) - Elevation gained
+    //   - date: timestamp (required, immutable) - Ride date
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "kusachiikot28@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['user', 'admin'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidRoute(data) {
+      return hasRequiredFields(['authorUid', 'name', 'points', 'isPublic', 'createdAt']) &&
+             data.authorUid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.points is list && data.points.size() < 1000 &&
+             data.isPublic is bool &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidRide(data) {
+      return hasRequiredFields(['uid', 'distance', 'duration', 'date']) &&
+             data.uid == request.auth.uid &&
+             data.distance is number && data.distance >= 0 &&
+             data.duration is number && data.duration >= 0 &&
+             data.date is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
+    }
+
+    match /routes/{routeId} {
+      allow read: if isAuthenticated() && (resource.data.isPublic == true || resource.data.authorUid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidRoute(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin()) && isValidRoute(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.authorUid == request.auth.uid || isAdmin());
+    }
+
+    match /rides/{rideId} {
+      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidRide(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin()) && isValidRide(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
